@@ -14,6 +14,8 @@ import {
   Settings as SettingsIcon,
 } from 'lucide-react';
 
+import { useThemeMode } from './hooks/settings';
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -97,17 +99,87 @@ function FooterNote() {
 }
 
 function HomePage() {
-  return <h1>Home</h1>;
+  return (
+    <div className="p-4 space-y-4">
+      <h2 className="text-xl font-semibold">Home</h2>
+      {/* Search and list trips here
+        - From
+        - To
+        - Date */}
+    </div>
+  );
 }
 
 function PublishPage() {
-  return <h1>Publish</h1>;
+  return (
+    <div className="p-4 space-y-4">
+      <h2 className="text-xl font-semibold">Publish</h2>
+      {/* Form to publish a new trip here
+        - From
+        - To
+        - Date
+        - Time
+        - Seats available
+        - Price
+        - Additional info
+      */}
+    </div>
+  );
 }
 
 function InboxPage() {
-  return <h1>Inbox</h1>;
+  return (
+    <div className="p-4 space-y-4">
+      <h2 className="text-xl font-semibold">Inbox</h2>
+      {/* List of received messages here */}
+    </div>
+  );
 }
 
 function SettingsPage() {
-  return <h1>Settings</h1>;
+  const [mode, setMode] = useThemeMode();
+
+  return (
+    <div className="p-4 space-y-4">
+      <h2 className="text-xl font-semibold">Settings</h2>
+
+      <h3 className="text-lg font-medium">Relays</h3>
+      <h3 className="text-lg font-medium">Private key</h3>
+      <h3 className="text-lg font-medium">Theme</h3>
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name="theme"
+            value="light"
+            checked={mode === 'light'}
+            onChange={() => setMode('light')}
+          />
+          <span>Light</span>
+        </label>
+
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name="theme"
+            value="dark"
+            checked={mode === 'dark'}
+            onChange={() => setMode('dark')}
+          />
+          <span>Dark</span>
+        </label>
+
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name="theme"
+            value="auto"
+            checked={mode === 'auto'}
+            onChange={() => setMode('auto')}
+          />
+          <span>Auto (system)</span>
+        </label>
+      </div>
+    </div>
+  );
 }
