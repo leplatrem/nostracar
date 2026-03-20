@@ -3,6 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <script>
+      (function() {
+        const mode = localStorage.getItem('theme-mode') || 'auto';
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (mode === 'dark' || (mode === 'auto' && prefersDark)) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
     <title>Nostracar</title>
   </head>
   <body>
