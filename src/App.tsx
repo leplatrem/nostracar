@@ -252,8 +252,7 @@ function HomePage() {
               </div>
               <div className="text-right">
                 <p className="font-bold text-primary">
-                  {trip.price || 'Free'}
-                  {trip.currency || 'EUR'}
+                  {trip.price ? `${trip.price} ${trip.currency}` : 'Free'}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {trip.seats} seats left
@@ -301,7 +300,7 @@ function SendDMPage() {
   const navigate = useNavigate();
 
   const initialMessage = state?.quote
-    ? state?.quote
+    ? state.quote
         .split('\n')
         .concat([''])
         .map((line: string) => `> ${line}\n`)
@@ -720,7 +719,7 @@ function SettingsPage() {
       <section className="space-y-2">
         <h3 className="text-lg font-medium">Relays</h3>
         {relays.map((url, i) => (
-          <div key={i} className="flex gap-2">
+          <div key={`${i}-${url}`} className="flex gap-2">
             <input
               className="flex-1 p-2 border rounded text-sm bg-background text-foreground"
               value={url}
