@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <script>
+      (function() {
+        const mode = localStorage.getItem('theme-mode') || 'auto';
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (mode === 'dark' || (mode === 'auto' && prefersDark)) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+    <title>Nostracar</title>
+    <script type="module" crossorigin src="/nostracar/assets/index-BHkQ2QsK.js"></script>
+    <link rel="stylesheet" crossorigin href="/nostracar/assets/index-DmoIVk3h.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
