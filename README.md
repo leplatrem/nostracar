@@ -18,6 +18,16 @@ The idea is to build a decentralized car sharing application Web app, potentiall
 - **Mute lists**: Respect user's mute/ban list, using standard list events (public or encrypted, NIP-51).
 
 
+## Development
+
+```
+npm ci
+```
+
+```
+npm run dev
+```
+
 ## License
 
 CC0 1.0 Universal
