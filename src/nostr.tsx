@@ -1,4 +1,5 @@
 import { Filter } from 'nostr-tools';
+
 import {
   generateSecretKey,
   getPublicKey,
@@ -18,7 +19,12 @@ export async function generateKey(): Promise<string> {
   return bytesToHex(sk);
 }
 
-export async function sendNostrPost(
+export function asPublicKey(secretKey: string): string {
+  const sk = hexToBytes(secretKey);
+  return getPublicKey(sk);
+}
+
+async function sendNostrPost(
   relays: string[],
   secretKey: string,
   event: EventTemplate
@@ -104,6 +110,39 @@ async function fetchMessages(
   );
 }
 
+export async function deleteEvent(
+  relays: string[],
+  secretKey: string,
+  eventId: string,
+  content: string
+) {
+  const sk = hexToBytes(secretKey);
+
+  const eventTemplate = {
+    kind: 5, // The standard Deletion Kind
+    created_at: Math.floor(Date.now() / 1000),
+    content,
+    tags: [
+      ['e', eventId], // The ID of the original message/event to delete
+    ],
+  };
+
+  const signedEvent = finalizeEvent(eventTemplate, sk);
+
+  const validRelays = relays.filter((url) => url.startsWith('wss://'));
+  await Promise.all(
+    validRelays.map(async (url) => {
+      try {
+        const relay = await Relay.connect(url);
+        await relay.publish(signedEvent);
+        relay.close();
+      } catch (e) {
+        console.error(`Failed to delete from ${url}`);
+      }
+    })
+  );
+}
+
 export async function fetchTrips(
   relays: string[],
   secretKey: string
@@ -121,7 +160,7 @@ export async function fetchInbox(
   relays: string[],
   secretKey: string
 ): Promise<NostrEvent[]> {
-  const pubkey = getPublicKey(hexToBytes(secretKey));
+  const pubkey = asPublicKey(secretKey);
   return fetchMessages(relays, secretKey, [
     {
       kinds: [NOSTRACAR_DM_KIND],

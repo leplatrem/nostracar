@@ -17,7 +17,15 @@ import {
 } from 'lucide-react';
 
 import { ThemeMode, useSettings, useThemeMode } from './hooks/settings';
-import { generateKey, postTrip, fetchTrips, fetchInbox, sendDM } from './nostr';
+import {
+  generateKey,
+  postTrip,
+  fetchTrips,
+  fetchInbox,
+  sendDM,
+  deleteEvent,
+  asPublicKey,
+} from './nostr';
 import { useEffect, useState } from 'react';
 import { NostrEvent } from 'nostr-tools';
 
@@ -176,6 +184,25 @@ function HomePage() {
     return <p className="p-4">Loading...</p>;
   }
 
+  const myPubKey = asPublicKey(privateKey);
+
+  const handleCancel = async (eventId: string) => {
+    if (!window.confirm('Are you sure you want to cancel this trip?')) return;
+    try {
+      await deleteEvent(
+        relays,
+        privateKey,
+        eventId,
+        'This trip has been cancelled by the driver.'
+      );
+      alert('Trip cancellation broadcasted!');
+      // Optimistic UI update: Remove it from the local list immediately
+      setTrips((prev) => prev.filter((t) => t.rawId !== eventId));
+    } catch (err) {
+      alert('Failed to cancel trip. Relays might be offline.');
+    }
+  };
+
   return (
     <div className="p-4 space-y-4 max-w-2xl mx-auto">
       <h2 className="text-xl font-bold">Latest Trips</h2>
@@ -217,14 +244,25 @@ function HomePage() {
               <span className="text-xs font-mono opacity-60">
                 Driver: {trip.driver.slice(0, 8)}...
               </span>
-              <button
-                onClick={() =>
-                  navigate(`/message/${trip.driver}`, { state: { trip } })
-                }
-                className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity"
-              >
-                Contact Driver
-              </button>
+              <div className="mt-4 flex gap-2">
+                {trip.driver === myPubKey ? (
+                  <button
+                    onClick={() => handleCancel(trip.rawId)}
+                    className="px-4 py-2 text-xs bg-red-500/10 text-red-500 border border-red-500/20 rounded-lg hover:bg-red-500 hover:text-white transition-all"
+                  >
+                    Cancel Trip
+                  </button>
+                ) : (
+                  <button
+                    onClick={() =>
+                      navigate(`/message/${trip.driver}`, { state: { trip } })
+                    }
+                    className="flex-1 py-2 bg-primary text-white rounded-lg font-bold"
+                  >
+                    Contact Driver
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ))
@@ -329,9 +367,16 @@ function PublishPage() {
     setStatus('📡 Broadcasting to relays...');
 
     try {
+      // Calculate expiration (e.g., 2 hours after the trip date/time)
+      const tripTimestamp = Math.floor(
+        new Date(`${formData.date} ${formData.time}`).getTime() / 1000
+      );
+      const expirationTime = tripTimestamp + 60 * 60 * 2;
+
       // Use formData.info as the main content string
       await postTrip(relays, privateKey, formData.info, {
         d: `trip-${crypto.randomUUID()}`, // unique ID (for edits)
+        expiration: expirationTime.toString(), // NIP-40 support
         from: formData.from,
         to: formData.to,
         date: formData.date,
