@@ -168,17 +168,23 @@ function HomePage() {
   useEffect(() => {
     if (!privateKey) return;
 
-    fetchTrips(relays, privateKey).then((entries) => {
-      const parsedEntries = entries.map(eventToTrip);
-      const cleanEntries = parsedEntries.filter((e: Trip) => {
-        const hasFrom = e.from;
-        const hasTo = e.to;
-        const hasDate = e.date;
-        return hasFrom && hasTo && hasDate;
+    let cancelled = false;
+    fetchTrips(relays, privateKey)
+      .then((entries) => {
+        if (cancelled) return;
+        const cleanEntries = entries
+          .map(eventToTrip)
+          .filter((e: Trip) => e.from && e.to && e.date);
+        setTrips(cleanEntries);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLoading(false);
       });
-      setTrips(cleanEntries);
-      setLoading(false);
-    });
+    return () => {
+      cancelled = true;
+    };
   }, [privateKey, relays]);
 
   if (!privateKey) {
@@ -583,10 +589,20 @@ function InboxPage() {
   useEffect(() => {
     if (!privateKey) return;
 
-    fetchInbox(relays, privateKey).then((data) => {
-      setMessages(data);
-      setLoading(false);
-    });
+    let cancelled = false;
+    fetchInbox(relays, privateKey)
+      .then((data) => {
+        if (cancelled) return;
+        setMessages(data);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [privateKey, relays]);
 
   if (!privateKey) {
