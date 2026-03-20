@@ -3,7 +3,10 @@ import { useEffect, useLayoutEffect, useState } from 'react';
 export interface NostrSettings {
   privateKey: string;
   setPrivateKey: (key: string) => void;
+  /** Valid wss:// relays only — use for all nostr operations */
   relays: string[];
+  /** All stored relay entries including incomplete ones — use for the settings UI */
+  rawRelays: string[];
   setRelays: (relays: string[]) => void;
 }
 
@@ -82,5 +85,5 @@ export function useSettings(): NostrSettings {
   ]);
 
   const validRelays = relays.filter((r) => r.startsWith('wss://'));
-  return { privateKey, setPrivateKey, relays: validRelays, setRelays };
+  return { privateKey, setPrivateKey, relays: validRelays, rawRelays: relays, setRelays };
 }

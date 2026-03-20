@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 
 import { ThemeMode, useSettings, useThemeMode } from './hooks/settings';
+import { useIdentity } from './hooks/identity';
 import { Toast, useToast } from './hooks/toast';
 import {
   generateKey,
@@ -25,7 +26,6 @@ import {
   fetchInbox,
   sendDM,
   deleteEvent,
-  asPublicKey,
 } from './nostr';
 import { useEffect, useState } from 'react';
 import { NostrEvent } from 'nostr-tools';
@@ -86,15 +86,14 @@ function LoadingState({ text = 'Loading...' }: { text?: string }) {
 function NoKeyWarning() {
   return (
     <div className="rounded-xl border border-dashed p-10 text-center space-y-3">
-      <p className="text-muted-foreground text-sm">
-        No private key configured.
+      <p className="text-muted-foreground text-sm">No identity configured.</p>
+      <p className="text-xs text-muted-foreground">
+        Use a Nostr extension (NIP-07) or set a private key in{' '}
+        <Link to="/settings" className="text-primary hover:underline">
+          Settings
+        </Link>
+        .
       </p>
-      <Link
-        to="/settings"
-        className="inline-block text-sm font-medium text-primary hover:underline"
-      >
-        Go to Settings →
-      </Link>
     </div>
   );
 }
@@ -280,7 +279,8 @@ function TripCard({
 }
 
 function HomePage() {
-  const { privateKey, relays } = useSettings();
+  const { signer, pubkey } = useIdentity();
+  const { relays } = useSettings();
   const [allTrips, setAllTrips] = useState<Trip[]>([]);
   const [latestLoading, setLatestLoading] = useState(true);
   const [search, setSearch] = useState({ from: '', to: '', date: '' });
@@ -289,10 +289,10 @@ function HomePage() {
   const { toast, show } = useToast();
 
   useEffect(() => {
-    if (!privateKey) return;
+    if (!signer) return;
 
     let cancelled = false;
-    fetchTrips(relays, privateKey)
+    fetchTrips(relays)
       .then((entries) => {
         if (cancelled) return;
         const clean = entries
@@ -308,12 +308,11 @@ function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [privateKey, relays]);
+  }, [signer, relays]);
 
-  if (!privateKey) return <NoKeyWarning />;
+  if (!signer) return <NoKeyWarning />;
 
-  const myPubKey = asPublicKey(privateKey);
-  const myTrips = allTrips.filter((t) => t.driver === myPubKey);
+  const myTrips = allTrips.filter((t) => t.driver === pubkey);
   const latestTrips = allTrips.slice(0, 10);
 
   const handleCancel = async (eventId: string) => {
@@ -321,7 +320,7 @@ function HomePage() {
     try {
       await deleteEvent(
         relays,
-        privateKey,
+        signer,
         eventId,
         'This trip has been cancelled by the driver.'
       );
@@ -340,7 +339,7 @@ function HomePage() {
 
     setSearchLoading(true);
     try {
-      const entries = await fetchTrips(relays, privateKey);
+      const entries = await fetchTrips(relays);
       const results = entries
         .map(eventToTrip)
         .filter((t) => t.from && t.to && t.date)
@@ -349,7 +348,8 @@ function HomePage() {
             !search.from ||
             t.from.toLowerCase().includes(search.from.toLowerCase());
           const matchTo =
-            !search.to || t.to.toLowerCase().includes(search.to.toLowerCase());
+            !search.to ||
+            t.to.toLowerCase().includes(search.to.toLowerCase());
           const matchDate = !search.date || t.date === search.date;
           return matchFrom && matchTo && matchDate;
         });
@@ -446,7 +446,7 @@ function HomePage() {
               <TripCard
                 key={trip.rawId}
                 trip={trip}
-                myPubKey={myPubKey}
+                myPubKey={pubkey}
                 onCancel={handleCancel}
               />
             ))
@@ -462,7 +462,7 @@ function HomePage() {
             <TripCard
               key={trip.rawId}
               trip={trip}
-              myPubKey={myPubKey}
+              myPubKey={pubkey}
               onCancel={handleCancel}
             />
           ))}
@@ -489,7 +489,7 @@ function HomePage() {
             <TripCard
               key={trip.rawId}
               trip={trip}
-              myPubKey={myPubKey}
+              myPubKey={pubkey}
               onCancel={handleCancel}
             />
           ))
@@ -502,9 +502,10 @@ function HomePage() {
 }
 
 function SendDMPage() {
-  const { pubkey } = useParams();
+  const { pubkey: recipientPubkey } = useParams();
   const { state } = useLocation();
-  const { privateKey, relays } = useSettings();
+  const { signer } = useIdentity();
+  const { relays } = useSettings();
   const { toast, show } = useToast();
   const navigate = useNavigate();
 
@@ -518,17 +519,17 @@ function SendDMPage() {
   const [message, setMessage] = useState(initialMessage);
   const [sending, setSending] = useState(false);
 
-  if (!pubkey || pubkey.length !== 64) {
+  if (!recipientPubkey || recipientPubkey.length !== 64) {
     return <p className="text-muted-foreground">Invalid recipient ID.</p>;
   }
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!privateKey || !message.trim()) return;
+    if (!signer || !message.trim()) return;
 
     setSending(true);
     try {
-      await sendDM(relays, privateKey, pubkey, message);
+      await sendDM(relays, signer, recipientPubkey, message);
       navigate('/inbox');
     } catch (err) {
       show(`Failed to send message: ${err}`, 'error');
@@ -553,7 +554,7 @@ function SendDMPage() {
             </span>
           </p>
         ) : (
-          <p className="font-mono">{pubkey.slice(0, 16)}…</p>
+          <p className="font-mono">{recipientPubkey.slice(0, 16)}…</p>
         )}
       </div>
 
@@ -579,7 +580,8 @@ function SendDMPage() {
 }
 
 function PublishPage() {
-  const { privateKey, relays } = useSettings();
+  const { signer } = useIdentity();
+  const { relays } = useSettings();
   const [isPublishing, setIsPublishing] = useState(false);
   const { toast, show } = useToast();
 
@@ -595,7 +597,7 @@ function PublishPage() {
   };
   const [formData, setFormData] = useState(emptyForm);
 
-  if (!privateKey) return <NoKeyWarning />;
+  if (!signer) return <NoKeyWarning />;
 
   const set =
     (field: string) =>
@@ -618,7 +620,7 @@ function PublishPage() {
       );
       const expirationTime = tripTimestamp + 60 * 60 * 2;
 
-      await postTrip(relays, privateKey, formData.info, {
+      await postTrip(relays, signer, formData.info, {
         d: `trip-${crypto.randomUUID()}`,
         expiration: expirationTime.toString(),
         from: formData.from,
@@ -771,17 +773,18 @@ function PublishPage() {
 }
 
 function InboxPage() {
-  const { privateKey, relays } = useSettings();
+  const { signer } = useIdentity();
+  const { relays } = useSettings();
   const [messages, setMessages] = useState<NostrEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast, show } = useToast();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!privateKey) return;
+    if (!signer) return;
 
     let cancelled = false;
-    fetchInbox(relays, privateKey)
+    fetchInbox(relays, signer)
       .then((data) => {
         if (cancelled) return;
         setMessages(data);
@@ -795,9 +798,9 @@ function InboxPage() {
     return () => {
       cancelled = true;
     };
-  }, [show, privateKey, relays]);
+  }, [signer, relays, show]);
 
-  if (!privateKey) return <NoKeyWarning />;
+  if (!signer) return <NoKeyWarning />;
   if (loading) return <LoadingState text="Checking your inbox…" />;
 
   return (
@@ -847,7 +850,8 @@ function InboxPage() {
 
 function SettingsPage() {
   const [mode, setMode] = useThemeMode();
-  const { privateKey, setPrivateKey, relays, setRelays } = useSettings();
+  const { privateKey, setPrivateKey, rawRelays, setRelays } = useSettings();
+  const { hasNip07, pubkey } = useIdentity();
 
   const handleGenerateKey = async () => {
     const secretKey = await generateKey();
@@ -855,7 +859,7 @@ function SettingsPage() {
   };
 
   const updateRelay = (index: number, value: string) => {
-    const newRelays = [...relays];
+    const newRelays = [...rawRelays];
     newRelays[index] = value;
     setRelays(newRelays);
   };
@@ -864,39 +868,56 @@ function SettingsPage() {
     <div className="max-w-lg space-y-6">
       <h2 className="text-2xl font-bold">Settings</h2>
 
-      {/* Private Key Section */}
+      {/* Identity Section */}
       <section className="space-y-3">
         <h3 className="text-base font-semibold border-b pb-2">Identity</h3>
-        <div className="space-y-1.5">
-          <FieldLabel htmlFor="privkey">Private Key</FieldLabel>
-          <p className="text-xs text-muted-foreground">
-            Keep this safe — losing it means losing your account.
-          </p>
-          <input
-            id="privkey"
-            type="text"
-            className="field font-mono"
-            value={privateKey}
-            onChange={(e) => setPrivateKey(e.target.value)}
-            placeholder="Hex private key…"
-          />
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleGenerateKey}
-            className="btn-primary"
-            disabled={privateKey != ''}
-          >
-            Generate New Key
-          </button>
-        </div>
+
+        {hasNip07 ? (
+          <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-3 flex items-center gap-3">
+            <span className="h-2 w-2 rounded-full bg-green-500 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-green-700 dark:text-green-300">
+                Nostr extension detected
+              </p>
+              {pubkey && (
+                <p className="text-xs font-mono text-muted-foreground truncate">
+                  {pubkey}
+                </p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <FieldLabel htmlFor="privkey">Private Key</FieldLabel>
+              <p className="text-xs text-muted-foreground">
+                Keep this safe — losing it means losing your account.
+              </p>
+              <input
+                id="privkey"
+                type="text"
+                className="field font-mono"
+                value={privateKey}
+                onChange={(e) => setPrivateKey(e.target.value)}
+                placeholder="Hex private key…"
+              />
+            </div>
+            <button
+              onClick={handleGenerateKey}
+              className="btn-primary"
+              disabled={privateKey !== ''}
+            >
+              Generate New Key
+            </button>
+          </div>
+        )}
       </section>
 
       {/* Relays Section */}
       <section className="space-y-3">
         <h3 className="text-base font-semibold border-b pb-2">Relays</h3>
         <div className="space-y-2">
-          {relays.map((url, i) => (
+          {rawRelays.map((url, i) => (
             <div key={`${i}-${url}`} className="flex gap-2">
               <input
                 className="field"
@@ -906,7 +927,7 @@ function SettingsPage() {
               />
               <button
                 onClick={() =>
-                  setRelays(relays.filter((_, index) => index !== i))
+                  setRelays(rawRelays.filter((_, index) => index !== i))
                 }
                 className="px-3 py-2 text-sm text-red-500 border rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
               >
@@ -916,7 +937,7 @@ function SettingsPage() {
           ))}
         </div>
         <button
-          onClick={() => setRelays([...relays, ''])}
+          onClick={() => setRelays([...rawRelays, ''])}
           className="text-sm text-primary hover:underline"
         >
           + Add Relay

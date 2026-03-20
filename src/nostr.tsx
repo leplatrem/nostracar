@@ -1,5 +1,4 @@
 import { Filter } from 'nostr-tools';
-
 import {
   generateSecretKey,
   getPublicKey,
@@ -11,57 +10,97 @@ import { Relay } from 'nostr-tools/relay';
 import { bytesToHex, hexToBytes } from 'nostr-tools/utils';
 import * as nip04 from 'nostr-tools/nip04';
 
+// ─── NIP-07 window.nostr type ─────────────────────────────────────────────────
+
+declare global {
+  interface Window {
+    nostr?: {
+      getPublicKey(): Promise<string>;
+      signEvent(event: EventTemplate): Promise<NostrEvent>;
+      nip04: {
+        encrypt(pubkey: string, plaintext: string): Promise<string>;
+        decrypt(pubkey: string, ciphertext: string): Promise<string>;
+      };
+    };
+  }
+}
+
+// ─── Signer abstraction ───────────────────────────────────────────────────────
+
+export interface NostrSigner {
+  getPublicKey(): Promise<string>;
+  signEvent(template: EventTemplate): Promise<NostrEvent>;
+  nip04: {
+    encrypt(pubkey: string, plaintext: string): Promise<string>;
+    decrypt(pubkey: string, ciphertext: string): Promise<string>;
+  };
+}
+
+export function makeKeySigner(secretKey: string): NostrSigner {
+  const sk = hexToBytes(secretKey);
+  return {
+    getPublicKey: async () => getPublicKey(sk),
+    signEvent: async (template) => finalizeEvent(template, sk),
+    nip04: {
+      encrypt: (pubkey, plaintext) => nip04.encrypt(secretKey, pubkey, plaintext),
+      decrypt: (pubkey, ciphertext) => nip04.decrypt(secretKey, pubkey, ciphertext),
+    },
+  };
+}
+
+export function makeNip07Signer(): NostrSigner {
+  return {
+    getPublicKey: () => window.nostr!.getPublicKey(),
+    signEvent: (template) => window.nostr!.signEvent(template),
+    nip04: {
+      encrypt: (pubkey, plaintext) => window.nostr!.nip04.encrypt(pubkey, plaintext),
+      decrypt: (pubkey, ciphertext) => window.nostr!.nip04.decrypt(pubkey, ciphertext),
+    },
+  };
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
 const KIND_NOSTR_NIP04 = 4;
 const KIND_NOSTRACAR_TRIP = 30050;
-
 const TIMEOUT_MS = 30000; // 30 seconds
 
 export async function generateKey(): Promise<string> {
-  const sk = generateSecretKey();
-  return bytesToHex(sk);
+  return bytesToHex(generateSecretKey());
 }
 
-export function asPublicKey(secretKey: string): string {
-  const sk = hexToBytes(secretKey);
-  return getPublicKey(sk);
-}
+// ─── Internal helpers ─────────────────────────────────────────────────────────
 
 async function sendEvent(
   relays: string[],
-  secretKey: string,
+  signer: NostrSigner,
   event: EventTemplate
 ) {
   if (relays.length === 0) {
     throw new Error('No valid relay URLs provided.');
   }
 
-  const sk = hexToBytes(secretKey);
-  const signedEvent = finalizeEvent(event, sk);
+  const signedEvent = await signer.signEvent(event);
 
-  console.log('Sending to relays:', relays);
   await Promise.allSettled(
     relays.map(async (url) => {
       const relay = await Relay.connect(url);
       await relay.publish(signedEvent);
       relay.close();
-      return url;
     })
   );
 }
 
 async function fetchEvents(
   relays: string[],
-  secretKey: string,
   filters: Array<Filter>
 ): Promise<NostrEvent[]> {
   if (relays.length === 0) {
     throw new Error('No valid relay URLs provided.');
   }
 
-  // We'll collect events from all relays
   const allEvents: NostrEvent[] = [];
 
-  // Map each relay connection to a promise
   const fetchPromises = relays.map(
     (url) =>
       new Promise<void>((resolve) => {
@@ -74,7 +113,6 @@ async function fetchEvents(
                 allEvents.push(event);
               },
               oneose() {
-                // EOSE = End of Stored Events. Relay is done sending history.
                 clearTimeout(timer);
                 sub.close();
                 relay.close();
@@ -82,7 +120,6 @@ async function fetchEvents(
               },
             });
 
-            // Safety timeout: if relay is slow, don't hang forever
             timer = setTimeout(() => {
               sub.close();
               relay.close();
@@ -98,34 +135,57 @@ async function fetchEvents(
 
   await Promise.all(fetchPromises);
 
-  return (
-    allEvents
-      // remove duplicates (since multiple relays might have the same post)
-      .filter((v, i, a) => a.findIndex((t) => t.id === v.id) === i)
-      // Sort by newest first
-      .sort((a, b) => b.created_at - a.created_at)
+  return allEvents
+    .filter((v, i, a) => a.findIndex((t) => t.id === v.id) === i)
+    .sort((a, b) => b.created_at - a.created_at);
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+export async function fetchTrips(relays: string[]): Promise<NostrEvent[]> {
+  return fetchEvents(relays, [
+    {
+      kinds: [KIND_NOSTRACAR_TRIP],
+      '#g': ['nostracar-v0'],
+      limit: 50,
+    },
+  ]);
+}
+
+export async function fetchInbox(
+  relays: string[],
+  signer: NostrSigner
+): Promise<NostrEvent[]> {
+  const pubkey = await signer.getPublicKey();
+  const events = await fetchEvents(relays, [
+    {
+      kinds: [KIND_NOSTR_NIP04],
+      '#g': ['nostracar-v0'],
+      '#p': [pubkey],
+      limit: 50,
+    },
+  ]);
+  return Promise.all(
+    events.map(async (event) => ({
+      ...event,
+      content: await signer.nip04.decrypt(event.pubkey, event.content),
+    }))
   );
 }
 
 export async function deleteEvent(
   relays: string[],
-  secretKey: string,
+  signer: NostrSigner,
   eventId: string,
   content: string
 ) {
-  const sk = hexToBytes(secretKey);
-
-  const eventTemplate = {
-    kind: 5, // The standard Deletion Kind
+  const template = {
+    kind: 5,
     created_at: Math.floor(Date.now() / 1000),
     content,
-    tags: [
-      ['e', eventId], // The ID of the original message/event to delete
-    ],
+    tags: [['e', eventId]],
   };
-
-  const signedEvent = finalizeEvent(eventTemplate, sk);
-
+  const signedEvent = await signer.signEvent(template);
   await Promise.all(
     relays.map(async (url) => {
       try {
@@ -139,44 +199,9 @@ export async function deleteEvent(
   );
 }
 
-export async function fetchTrips(
-  relays: string[],
-  secretKey: string
-): Promise<NostrEvent[]> {
-  return fetchEvents(relays, secretKey, [
-    {
-      kinds: [KIND_NOSTRACAR_TRIP],
-      '#g': ['nostracar-v0'],
-      limit: 50,
-    },
-  ]);
-}
-
-export async function fetchInbox(
-  relays: string[],
-  secretKey: string
-): Promise<NostrEvent[]> {
-  const pubkey = asPublicKey(secretKey);
-  const events = await fetchEvents(relays, secretKey, [
-    {
-      kinds: [KIND_NOSTR_NIP04],
-      '#g': ['nostracar-v0'],
-      '#p': [pubkey],
-      limit: 50,
-    },
-  ]);
-  const decryptedMessages = await Promise.all(
-    events.map(async (event) => ({
-      ...event,
-      content: await nip04.decrypt(secretKey, event.pubkey, event.content),
-    }))
-  );
-  return decryptedMessages;
-}
-
 export async function postTrip(
   relays: string[],
-  secretKey: string,
+  signer: NostrSigner,
   content: string,
   tripData: Record<string, string>
 ) {
@@ -185,17 +210,15 @@ export async function postTrip(
     created_at: Math.floor(Date.now() / 1000),
     content,
     tags: [['g', 'nostracar-v0']].concat(
-      Object.entries(tripData).map(([key, value]) => {
-        return [key, value];
-      })
+      Object.entries(tripData).map(([key, value]) => [key, value])
     ),
   };
-  return sendEvent(relays, secretKey, event);
+  return sendEvent(relays, signer, event);
 }
 
 export async function sendDM(
   relays: string[],
-  secretKey: string,
+  signer: NostrSigner,
   recipientPubKey: string,
   content: string,
   replyTo?: NostrEvent | null
@@ -212,8 +235,8 @@ export async function sendDM(
   const event = {
     kind: KIND_NOSTR_NIP04,
     created_at: Math.floor(Date.now() / 1000),
-    content: await nip04.encrypt(secretKey, recipientPubKey, content),
+    content: await signer.nip04.encrypt(recipientPubKey, content),
     tags,
   };
-  return sendEvent(relays, secretKey, event);
+  return sendEvent(relays, signer, event);
 }
