@@ -31,17 +31,16 @@ async function sendEvent(
   secretKey: string,
   event: EventTemplate
 ) {
-  const validRelays = relays.filter((url) => url.startsWith('wss://'));
-  if (validRelays.length === 0) {
+  if (relays.length === 0) {
     throw new Error('No valid relay URLs provided.');
   }
 
   const sk = hexToBytes(secretKey);
   const signedEvent = finalizeEvent(event, sk);
 
-  console.log('Sending to relays:', validRelays);
+  console.log('Sending to relays:', relays);
   await Promise.allSettled(
-    validRelays.map(async (url) => {
+    relays.map(async (url) => {
       const relay = await Relay.connect(url);
       await relay.publish(signedEvent);
       relay.close();
@@ -55,8 +54,7 @@ async function fetchEvents(
   secretKey: string,
   filters: Array<Filter>
 ): Promise<NostrEvent[]> {
-  const validRelays = relays.filter((url) => url.startsWith('wss://'));
-  if (validRelays.length === 0) {
+  if (relays.length === 0) {
     throw new Error('No valid relay URLs provided.');
   }
 
@@ -64,7 +62,7 @@ async function fetchEvents(
   const allEvents: NostrEvent[] = [];
 
   // Map each relay connection to a promise
-  const fetchPromises = validRelays.map(
+  const fetchPromises = relays.map(
     (url) =>
       new Promise<void>((resolve) => {
         Relay.connect(url)
@@ -128,9 +126,8 @@ export async function deleteEvent(
 
   const signedEvent = finalizeEvent(eventTemplate, sk);
 
-  const validRelays = relays.filter((url) => url.startsWith('wss://'));
   await Promise.all(
-    validRelays.map(async (url) => {
+    relays.map(async (url) => {
       try {
         const relay = await Relay.connect(url);
         await relay.publish(signedEvent);

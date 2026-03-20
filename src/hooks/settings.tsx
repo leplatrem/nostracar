@@ -81,5 +81,6 @@ export function useSettings(): NostrSettings {
     'wss://nos.lol',
   ]);
 
-  return { privateKey, setPrivateKey, relays, setRelays };
+  const validRelays = relays.filter((r) => r.startsWith('wss://'));
+  return { privateKey, setPrivateKey, relays: validRelays, setRelays };
 }

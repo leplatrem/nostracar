@@ -10,10 +10,13 @@ import prettierConfig from 'eslint-config-prettier'
 import globals from 'globals'
 
 export default [
+  // Global ignores — these paths are never processed by any config block
+  { ignores: ['dist/', 'node_modules/', '.vite/'] },
+
   // Lint your source files (browser)
   {
     files: ['src/**/*.{ts,tsx,js,jsx}'],
-    ignores: ['dist', 'node_modules'],
+    ignores: ['dist', 'node_modules', '.vite'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {
@@ -48,7 +51,7 @@ export default [
   // (Optional) Node/Config files (so `require`, `module`, etc. don’t error)
   {
     files: ['*.{js,cjs,mjs,ts,mts}', 'vite.config.*'],
-    ignores: ['node_modules', 'dist'],
+    ignores: ['node_modules', 'dist', '.vite'],
     languageOptions: {
       globals: {
         ...globals.node,
