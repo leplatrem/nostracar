@@ -162,6 +162,7 @@ function HomePage() {
   const { privateKey, relays } = useSettings();
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -180,6 +181,11 @@ function HomePage() {
     });
   }, [privateKey, relays]);
 
+  if (!privateKey) {
+    setStatus('❌ Please set your private key in Settings first.');
+    return;
+  }
+
   if (loading) {
     return <p className="p-4">Loading...</p>;
   }
@@ -195,17 +201,28 @@ function HomePage() {
         eventId,
         'This trip has been cancelled by the driver.'
       );
-      alert('Trip cancellation broadcasted!');
+      setStatus('✅ Trip cancellation broadcasted!');
       // Optimistic UI update: Remove it from the local list immediately
       setTrips((prev) => prev.filter((t) => t.rawId !== eventId));
     } catch (err) {
-      alert(`Failed to cancel trip. Relays might be offline (${err}).`);
+      setStatus(`❌ Failed to cancel trip. Relays might be offline (${err}).`);
     }
   };
 
   return (
     <div className="p-4 space-y-4 max-w-2xl mx-auto">
       <h2 className="text-xl font-bold">Latest Trips</h2>
+      {status && (
+        <div
+          className={`p-4 rounded-lg text-sm font-medium ${
+            status.includes('✅')
+              ? 'bg-green-50 text-green-700 border border-green-200'
+              : 'bg-red-50 text-red-700 border border-red-200'
+          }`}
+        >
+          {status}
+        </div>
+      )}
       {/* Search and list trips here
         - From
         - To
@@ -286,6 +303,7 @@ function SendDMPage() {
     : ``;
   const [message, setMessage] = useState(initialMessage);
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
 
   if (!pubkey || pubkey.length !== 64) {
     return <p className="p-4">Invalid driver ID.</p>;
@@ -296,12 +314,12 @@ function SendDMPage() {
     if (!privateKey || !message.trim()) return;
 
     setSending(true);
+    setError('');
     try {
       await sendDM(relays, privateKey, pubkey, message);
-      alert('Message sent!');
       navigate('/inbox');
     } catch (err) {
-      alert('Failed to send message.' + err);
+      setError(`Failed to send message: ${err}`);
     } finally {
       setSending(false);
     }
@@ -328,6 +346,11 @@ function SendDMPage() {
           onChange={(e) => setMessage(e.target.value)}
           disabled={sending}
         />
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
+            {error}
+          </p>
+        )}
         <button
           type="submit"
           disabled={sending || !message.trim()}
@@ -405,6 +428,11 @@ function PublishPage() {
       setIsPublishing(false);
     }
   };
+
+  if (!privateKey) {
+    setStatus('❌ Please set your private key in Settings first.');
+    return;
+  }
 
   // Helper to disable button if required fields are missing
   const isInvalid =
@@ -549,6 +577,7 @@ function InboxPage() {
   const { privateKey, relays } = useSettings();
   const [messages, setMessages] = useState<NostrEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -559,6 +588,11 @@ function InboxPage() {
       setLoading(false);
     });
   }, [privateKey, relays]);
+
+  if (!privateKey) {
+    setStatus('❌ Please set your private key in Settings first.');
+    return;
+  }
 
   if (loading)
     return (
@@ -614,6 +648,14 @@ function InboxPage() {
           );
         })
       )}
+      {status && (
+        <div
+          className={`p-4 rounded-lg text-sm font-medium animate-in fade-in slide-in-from-bottom-2
+          ${status.includes('✅') ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}
+        >
+          {status}
+        </div>
+      )}
     </div>
   );
 }
@@ -630,7 +672,7 @@ function SettingsPage() {
   const updateRelay = (index: number, value: string) => {
     const newRelays = [...relays];
     newRelays[index] = value;
-    setRelays(newRelays); // Remove empty entries
+    setRelays(newRelays);
   };
 
   return (
