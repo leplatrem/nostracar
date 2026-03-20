@@ -136,8 +136,8 @@ export async function deleteEvent(
         const relay = await Relay.connect(url);
         await relay.publish(signedEvent);
         relay.close();
-      } catch (e) {
-        console.error(`Failed to delete from ${url}`);
+      } catch (err) {
+        console.error(`Failed to delete from ${url} (${err})`);
       }
     })
   );

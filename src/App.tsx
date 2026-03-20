@@ -199,7 +199,7 @@ function HomePage() {
       // Optimistic UI update: Remove it from the local list immediately
       setTrips((prev) => prev.filter((t) => t.rawId !== eventId));
     } catch (err) {
-      alert('Failed to cancel trip. Relays might be offline.');
+      alert(`Failed to cancel trip. Relays might be offline (${err}).`);
     }
   };
 
