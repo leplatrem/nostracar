@@ -59,8 +59,12 @@ function useLocalStorage<T>(
   defaultValue: T
 ): [T, (value: T) => void] {
   const [value, setValue] = useState<T>(() => {
-    const saved = localStorage.getItem(key);
-    return saved ? JSON.parse(saved) : defaultValue;
+    try {
+      const saved = localStorage.getItem(key);
+      return saved ? JSON.parse(saved) : defaultValue;
+    } catch {
+      return defaultValue;
+    }
   });
 
   useEffect(() => {
