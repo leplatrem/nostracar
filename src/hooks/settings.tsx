@@ -1,10 +1,18 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+
+export interface RelayEntry {
+  url: string;
+  enabled: boolean;
+}
 
 export interface NostrSettings {
   privateKey: string;
   setPrivateKey: (key: string) => void;
+  /** Enabled wss:// relays only — use for all nostr operations */
   relays: string[];
-  setRelays: (relays: string[]) => void;
+  /** All stored relay entries — use for the settings UI */
+  rawRelays: RelayEntry[];
+  setRelays: (relays: RelayEntry[]) => void;
 }
 
 export type ThemeMode = 'light' | 'dark' | 'auto';
@@ -74,13 +82,38 @@ function useLocalStorage<T>(
   return [value, setValue] as const;
 }
 
-export function useSettings(): NostrSettings {
-  const [privateKey, setPrivateKey] = useLocalStorage<string>('nostr-key', '');
-  const [relays, setRelays] = useLocalStorage<string[]>('nostr-relays', [
-    'wss://relay.damus.io',
-    'wss://nos.lol',
-  ]);
+const DEFAULT_RELAYS: RelayEntry[] = [
+  { url: 'wss://relay.damus.io', enabled: true },
+  { url: 'wss://nos.lol', enabled: false },
+  { url: 'wss://nostr.swiss-enigma.ch', enabled: false },
+  { url: 'wss://nostr.einundzwanzig.space', enabled: false },
+  { url: 'wss://offchain.pub', enabled: false },
+  { url: 'wss://relay.primal.net', enabled: false },
+  { url: 'wss://relay.nsec.app', enabled: false },
+];
 
-  const validRelays = relays.filter((r) => r.startsWith('wss://'));
-  return { privateKey, setPrivateKey, relays: validRelays, setRelays };
+export function useSettings(): NostrSettings {
+  const [privateKey, setPrivateKey] = useLocalStorage<string>(
+    'nostr-key-v0',
+    ''
+  );
+  const [rawData, setRelays] = useLocalStorage<RelayEntry[] | string[]>(
+    'nostr-relays-v0',
+    DEFAULT_RELAYS
+  );
+
+  const rawRelays: RelayEntry[] = rawData as RelayEntry[];
+  const relays = useMemo(() => {
+    return rawRelays
+      .filter((e) => e.enabled && e.url.startsWith('wss://'))
+      .map((e) => e.url);
+  }, [rawRelays]);
+
+  return {
+    privateKey,
+    setPrivateKey,
+    relays,
+    rawRelays,
+    setRelays: setRelays as (relays: RelayEntry[]) => void,
+  };
 }

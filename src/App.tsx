@@ -16,7 +16,19 @@ import {
   Settings as SettingsIcon,
 } from 'lucide-react';
 
-import { ThemeMode, useSettings, useThemeMode } from './hooks/settings';
+import {
+  RelayEntry,
+  ThemeMode,
+  useSettings,
+  useThemeMode,
+} from './hooks/settings';
+import {
+  useIdentity,
+  useNip05Validation,
+  useProfile,
+  useReports,
+  useUserTrips,
+} from './hooks/identity';
 import { Toast, useToast } from './hooks/toast';
 import {
   generateKey,
@@ -25,54 +37,12 @@ import {
   fetchInbox,
   sendDM,
   deleteEvent,
-  asPublicKey,
+  Trip,
 } from './nostr';
 import { useEffect, useState } from 'react';
 import { NostrEvent } from 'nostr-tools';
-
-type Trip = {
-  rawId: string;
-  id: string;
-  info: string;
-  createdAt: Date;
-  driver: string;
-  from: string;
-  to: string;
-  date: string;
-  time: string;
-  seats: number;
-  price: number;
-  currency: string;
-};
-
-export function eventToTrip(event: NostrEvent): Trip {
-  const eventTags = event.tags.reduce(
-    (acc, [key, value]) => {
-      if (key && value) {
-        acc[key] = value;
-      }
-      return acc;
-    },
-    {} as Record<string, string>
-  );
-
-  return {
-    rawId: event.id,
-    id: eventTags.d || '',
-    driver: event.pubkey,
-    info: event.content,
-    createdAt: new Date(event.created_at * 1000),
-    from: eventTags.from || '',
-    to: eventTags.to || '',
-    date: eventTags.date || '',
-    time: eventTags.time || '',
-    seats: parseInt(eventTags.seats || '0', 10),
-    price: parseFloat(eventTags.price || '0'),
-    currency: eventTags.currency || 'SATS',
-  };
-}
-
-// ─── Shared UI ────────────────────────────────────────────────────
+import { getPublicKey } from 'nostr-tools/pure';
+import { hexToBytes } from 'nostr-tools/utils';
 
 function LoadingState({ text = 'Loading...' }: { text?: string }) {
   return (
@@ -86,15 +56,14 @@ function LoadingState({ text = 'Loading...' }: { text?: string }) {
 function NoKeyWarning() {
   return (
     <div className="rounded-xl border border-dashed p-10 text-center space-y-3">
-      <p className="text-muted-foreground text-sm">
-        No private key configured.
+      <p className="text-muted-foreground text-sm">No identity configured.</p>
+      <p className="text-xs text-muted-foreground">
+        Use a Nostr extension (NIP-07) or set a private key in{' '}
+        <Link to="/settings" className="text-primary hover:underline">
+          Settings
+        </Link>
+        .
       </p>
-      <Link
-        to="/settings"
-        className="inline-block text-sm font-medium text-primary hover:underline"
-      >
-        Go to Settings →
-      </Link>
     </div>
   );
 }
@@ -133,6 +102,7 @@ function AppShell() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/message/:pubkey" element={<SendDMPage />} />
+        <Route path="/profile/:pubkey" element={<ProfilePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <FooterNote />
@@ -218,12 +188,12 @@ function FooterNote() {
 
 function TripCard({
   trip,
-  myPubKey,
-  onCancel,
+  onCancel = null,
+  showContactDriver = true,
 }: {
   trip: Trip;
-  myPubKey: string;
-  onCancel: (id: string) => void;
+  onCancel?: ((id: string) => void) | null;
+  showContactDriver?: boolean;
 }) {
   const navigate = useNavigate();
   return (
@@ -254,17 +224,21 @@ function TripCard({
       )}
 
       <div className="flex justify-between items-center mt-3 pt-3 border-t">
-        <span className="text-xs font-mono text-muted-foreground">
+        <Link
+          to={`/profile/${trip.driver}`}
+          className="text-xs font-mono text-muted-foreground hover:text-primary transition-colors"
+        >
           {trip.driver.slice(0, 8)}…
-        </span>
-        {trip.driver === myPubKey ? (
+        </Link>
+        {onCancel && (
           <button
             onClick={() => onCancel(trip.rawId)}
             className="px-3 py-1.5 text-xs bg-red-500/10 text-red-500 border border-red-500/20 rounded-lg hover:bg-red-500 hover:text-white transition-all"
           >
             Cancel Trip
           </button>
-        ) : (
+        )}
+        {showContactDriver && (
           <button
             onClick={() =>
               navigate(`/message/${trip.driver}`, { state: { trip } })
@@ -280,7 +254,8 @@ function TripCard({
 }
 
 function HomePage() {
-  const { privateKey, relays } = useSettings();
+  const { signer, pubkey } = useIdentity();
+  const { relays } = useSettings();
   const [allTrips, setAllTrips] = useState<Trip[]>([]);
   const [latestLoading, setLatestLoading] = useState(true);
   const [search, setSearch] = useState({ from: '', to: '', date: '' });
@@ -289,16 +264,13 @@ function HomePage() {
   const { toast, show } = useToast();
 
   useEffect(() => {
-    if (!privateKey) return;
+    if (!signer) return;
 
     let cancelled = false;
-    fetchTrips(relays, privateKey)
+    fetchTrips(relays)
       .then((entries) => {
         if (cancelled) return;
-        const clean = entries
-          .map(eventToTrip)
-          .filter((e) => e.from && e.to && e.date);
-        setAllTrips(clean);
+        setAllTrips(entries);
         setLatestLoading(false);
       })
       .catch(() => {
@@ -308,12 +280,11 @@ function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [privateKey, relays]);
+  }, [signer, relays]);
 
-  if (!privateKey) return <NoKeyWarning />;
+  if (!signer) return <NoKeyWarning />;
 
-  const myPubKey = asPublicKey(privateKey);
-  const myTrips = allTrips.filter((t) => t.driver === myPubKey);
+  const myTrips = allTrips.filter((t) => t.driver === pubkey);
   const latestTrips = allTrips.slice(0, 10);
 
   const handleCancel = async (eventId: string) => {
@@ -321,7 +292,7 @@ function HomePage() {
     try {
       await deleteEvent(
         relays,
-        privateKey,
+        signer,
         eventId,
         'This trip has been cancelled by the driver.'
       );
@@ -340,19 +311,11 @@ function HomePage() {
 
     setSearchLoading(true);
     try {
-      const entries = await fetchTrips(relays, privateKey);
-      const results = entries
-        .map(eventToTrip)
-        .filter((t) => t.from && t.to && t.date)
-        .filter((t) => {
-          const matchFrom =
-            !search.from ||
-            t.from.toLowerCase().includes(search.from.toLowerCase());
-          const matchTo =
-            !search.to || t.to.toLowerCase().includes(search.to.toLowerCase());
-          const matchDate = !search.date || t.date === search.date;
-          return matchFrom && matchTo && matchDate;
-        });
+      const results = await fetchTrips(relays, {
+        from: search.from,
+        to: search.to,
+        date: search.date,
+      });
       setSearchResults(results);
     } catch {
       show('Search failed. Relays might be offline.', 'error');
@@ -443,12 +406,7 @@ function HomePage() {
             </div>
           ) : (
             searchResults.map((trip) => (
-              <TripCard
-                key={trip.rawId}
-                trip={trip}
-                myPubKey={myPubKey}
-                onCancel={handleCancel}
-              />
+              <TripCard key={trip.rawId} trip={trip} />
             ))
           )}
         </section>
@@ -462,8 +420,8 @@ function HomePage() {
             <TripCard
               key={trip.rawId}
               trip={trip}
-              myPubKey={myPubKey}
               onCancel={handleCancel}
+              showContactDriver={false}
             />
           ))}
         </section>
@@ -485,14 +443,7 @@ function HomePage() {
             !
           </div>
         ) : (
-          latestTrips.map((trip) => (
-            <TripCard
-              key={trip.rawId}
-              trip={trip}
-              myPubKey={myPubKey}
-              onCancel={handleCancel}
-            />
-          ))
+          latestTrips.map((trip) => <TripCard key={trip.rawId} trip={trip} />)
         )}
       </section>
 
@@ -502,9 +453,10 @@ function HomePage() {
 }
 
 function SendDMPage() {
-  const { pubkey } = useParams();
+  const { pubkey: recipientPubkey } = useParams();
   const { state } = useLocation();
-  const { privateKey, relays } = useSettings();
+  const { signer } = useIdentity();
+  const { relays } = useSettings();
   const { toast, show } = useToast();
   const navigate = useNavigate();
 
@@ -518,17 +470,17 @@ function SendDMPage() {
   const [message, setMessage] = useState(initialMessage);
   const [sending, setSending] = useState(false);
 
-  if (!pubkey || pubkey.length !== 64) {
+  if (!recipientPubkey || recipientPubkey.length !== 64) {
     return <p className="text-muted-foreground">Invalid recipient ID.</p>;
   }
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!privateKey || !message.trim()) return;
+    if (!signer || !message.trim()) return;
 
     setSending(true);
     try {
-      await sendDM(relays, privateKey, pubkey, message);
+      await sendDM(relays, signer, recipientPubkey, message);
       navigate('/inbox');
     } catch (err) {
       show(`Failed to send message: ${err}`, 'error');
@@ -553,7 +505,7 @@ function SendDMPage() {
             </span>
           </p>
         ) : (
-          <p className="font-mono">{pubkey.slice(0, 16)}…</p>
+          <p className="font-mono">{recipientPubkey.slice(0, 16)}…</p>
         )}
       </div>
 
@@ -579,7 +531,8 @@ function SendDMPage() {
 }
 
 function PublishPage() {
-  const { privateKey, relays } = useSettings();
+  const { signer } = useIdentity();
+  const { relays } = useSettings();
   const [isPublishing, setIsPublishing] = useState(false);
   const { toast, show } = useToast();
 
@@ -595,7 +548,7 @@ function PublishPage() {
   };
   const [formData, setFormData] = useState(emptyForm);
 
-  if (!privateKey) return <NoKeyWarning />;
+  if (!signer) return <NoKeyWarning />;
 
   const set =
     (field: string) =>
@@ -618,7 +571,7 @@ function PublishPage() {
       );
       const expirationTime = tripTimestamp + 60 * 60 * 2;
 
-      await postTrip(relays, privateKey, formData.info, {
+      await postTrip(relays, signer, formData.info, {
         d: `trip-${crypto.randomUUID()}`,
         expiration: expirationTime.toString(),
         from: formData.from,
@@ -771,17 +724,18 @@ function PublishPage() {
 }
 
 function InboxPage() {
-  const { privateKey, relays } = useSettings();
+  const { signer } = useIdentity();
+  const { relays } = useSettings();
   const [messages, setMessages] = useState<NostrEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast, show } = useToast();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!privateKey) return;
+    if (!signer) return;
 
     let cancelled = false;
-    fetchInbox(relays, privateKey)
+    fetchInbox(relays, signer)
       .then((data) => {
         if (cancelled) return;
         setMessages(data);
@@ -795,9 +749,9 @@ function InboxPage() {
     return () => {
       cancelled = true;
     };
-  }, [show, privateKey, relays]);
+  }, [signer, relays, show]);
 
-  if (!privateKey) return <NoKeyWarning />;
+  if (!signer) return <NoKeyWarning />;
   if (loading) return <LoadingState text="Checking your inbox…" />;
 
   return (
@@ -845,70 +799,302 @@ function InboxPage() {
   );
 }
 
+function ProfilePage() {
+  const { pubkey: viewPubkey } = useParams<{ pubkey: string }>();
+  const { relays } = useSettings();
+  const navigate = useNavigate();
+
+  const {
+    profile,
+    metadataAt,
+    loading: profileLoading,
+  } = useProfile(relays, viewPubkey);
+  const { trips, loading: tripsLoading } = useUserTrips(relays, viewPubkey);
+  const { reports, loading: reportsLoading } = useReports(relays, viewPubkey);
+  const { valid: nip05Valid } = useNip05Validation(profile?.nip05, viewPubkey);
+
+  if (!viewPubkey) return <Navigate to="/" replace />;
+
+  const displayName =
+    profile?.displayName || profile?.name || viewPubkey.slice(0, 8) + '…';
+
+  const nostracarSince =
+    trips.length > 0
+      ? new Date(Math.min(...trips.map((t) => t.createdAt.getTime())))
+      : null;
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+      {/* Profile header */}
+      {profileLoading ? (
+        <LoadingState text="Loading profile…" />
+      ) : (
+        <>
+          <div className="bg-card border rounded-xl p-5 shadow-sm space-y-4">
+            <div className="flex items-start gap-4">
+              {profile?.picture && (
+                <img
+                  src={profile.picture}
+                  alt={displayName}
+                  className="h-16 w-16 rounded-full object-cover border shrink-0"
+                />
+              )}
+            </div>
+            <div className="min-w-0 space-y-1 flex-1">
+              <h2 className="text-xl font-bold truncate">{displayName}</h2>
+              {profile?.nip05 && (
+                <p
+                  className={`text-sm ${
+                    nip05Valid === true
+                      ? 'text-green-600 dark:text-green-400'
+                      : nip05Valid === false
+                        ? 'text-red-500'
+                        : 'text-muted-foreground'
+                  }`}
+                >
+                  {nip05Valid === true ? '✓' : nip05Valid === false ? '✗' : '…'}{' '}
+                  {profile.nip05}
+                </p>
+              )}
+              <p className="text-xs font-mono text-muted-foreground break-all">
+                {viewPubkey}
+              </p>
+              {profile?.about && (
+                <p className="text-sm text-muted-foreground pt-1">
+                  {profile.about}
+                </p>
+              )}
+              <button
+                onClick={() => navigate(`/message/${viewPubkey}`, {})}
+                className="btn-primary"
+              >
+                Contact Driver
+              </button>
+            </div>
+          </div>
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-3 pt-3 border-t text-center">
+            <div>
+              <p className="text-lg font-bold">{trips.length}</p>
+              <p className="text-xs text-muted-foreground">Trips</p>
+            </div>
+            <div>
+              <p className="text-sm font-semibold">
+                {nostracarSince ? nostracarSince.toLocaleDateString() : '—'}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                On Nostracar since
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-semibold">
+                {metadataAt
+                  ? new Date(metadataAt * 1000).toLocaleDateString()
+                  : '—'}
+              </p>
+              <p className="text-xs text-muted-foreground">Nostr since</p>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Reports warning */}
+      {reportsLoading ? (
+        <LoadingState text="Loading reports…" />
+      ) : reports.length == 0 ? (
+        <div className="rounded-xl border border-green-200 dark:border-green-900 bg-green-50 dark:bg-green-900/10 p-4">
+          <p className="text-sm font-semibold text-green-600 dark:text-green-400">
+            ✅ This user has no reports.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-900/10 p-4 space-y-3">
+          <p className="text-sm font-semibold text-red-600 dark:text-red-400">
+            ⚠️ This user has been reported {reports.length} time
+            {reports.length !== 1 ? 's' : ''}
+          </p>
+          <div className="space-y-2">
+            {reports.map((r) => (
+              <div
+                key={r.id}
+                className="text-sm border-l-2 border-red-300 pl-3"
+              >
+                <p className="text-xs text-muted-foreground">
+                  {r.tags.find(([k]) => k === 'p')?.[2] ?? 'other'} ·{' '}
+                  {new Date(r.created_at * 1000).toLocaleDateString()}
+                </p>
+                {r.content && <p>{r.content}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Ride history */}
+      {tripsLoading ? (
+        <LoadingState text="Loading trips…" />
+      ) : (
+        <section className="space-y-3">
+          <h3 className="text-lg font-semibold">
+            Ride History
+            {trips.length > 0 && (
+              <span className="text-sm font-normal text-muted-foreground ml-2">
+                {trips.length} trip{trips.length !== 1 ? 's' : ''}, last:{' '}
+                {trips[0].createdAt.toLocaleDateString()}
+              </span>
+            )}
+          </h3>
+          {trips.length === 0 ? (
+            <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground text-sm">
+              No trips found for this user.
+            </div>
+          ) : (
+            trips.map((trip) => (
+              <TripCard
+                key={trip.rawId}
+                trip={trip}
+                showContactDriver={false}
+              />
+            ))
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
 function SettingsPage() {
   const [mode, setMode] = useThemeMode();
-  const { privateKey, setPrivateKey, relays, setRelays } = useSettings();
+  const { privateKey, setPrivateKey, rawRelays, setRelays } = useSettings();
+  const { hasNip07, pubkey } = useIdentity();
 
   const handleGenerateKey = async () => {
     const secretKey = await generateKey();
     setPrivateKey(secretKey);
   };
 
-  const updateRelay = (index: number, value: string) => {
-    const newRelays = [...relays];
-    newRelays[index] = value;
+  const updateRelay = (index: number, patch: Partial<RelayEntry>) => {
+    const newRelays = rawRelays.map((entry, i) =>
+      i === index ? { ...entry, ...patch } : entry
+    );
     setRelays(newRelays);
   };
+
+  let derivedPubkey = '';
+  try {
+    if (privateKey) derivedPubkey = getPublicKey(hexToBytes(privateKey));
+  } catch {
+    /* invalid key */
+  }
 
   return (
     <div className="max-w-lg space-y-6">
       <h2 className="text-2xl font-bold">Settings</h2>
 
-      {/* Private Key Section */}
+      {/* Identity Section */}
       <section className="space-y-3">
         <h3 className="text-base font-semibold border-b pb-2">Identity</h3>
-        <div className="space-y-1.5">
-          <FieldLabel htmlFor="privkey">Private Key</FieldLabel>
-          <p className="text-xs text-muted-foreground">
-            Keep this safe — losing it means losing your account.
-          </p>
-          <input
-            id="privkey"
-            type="text"
-            className="field font-mono"
-            value={privateKey}
-            onChange={(e) => setPrivateKey(e.target.value)}
-            placeholder="Hex private key…"
-          />
-        </div>
-        <div className="flex items-center gap-3">
+
+        {/* NIP-07 */}
+        {hasNip07 ? (
+          <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-3 flex items-center gap-3">
+            <span className="h-2 w-2 rounded-full bg-green-500 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-green-700 dark:text-green-300">
+                Browser extension active (NIP-07)
+              </p>
+              {pubkey && (
+                <p className="text-xs font-mono text-muted-foreground truncate">
+                  {pubkey}
+                </p>
+              )}
+            </div>
+          </div>
+        ) : (
           <button
-            onClick={handleGenerateKey}
-            className="btn-primary"
-            disabled={privateKey != ''}
+            disabled
+            className="w-full flex items-center gap-2 px-4 py-2 border rounded-lg text-sm bg-background text-muted-foreground opacity-50 cursor-not-allowed"
           >
-            Generate New Key
+            <span className="h-4 w-4 inline-block border rounded-sm bg-muted" />
+            Browser Extension (NIP-07) — not detected
           </button>
-        </div>
+        )}
+
+        {/* Divider */}
+        {!hasNip07 && (
+          <>
+            {/* Private key fallback */}
+            <div className="relative my-1">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-background px-2 text-muted-foreground">
+                  Or use a local key
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <FieldLabel htmlFor="privkey">Private Key</FieldLabel>
+                <p className="text-xs text-muted-foreground">
+                  Keep this safe — losing it means losing your account.
+                </p>
+                <input
+                  id="privkey"
+                  type="text"
+                  className="field font-mono"
+                  value={privateKey}
+                  onChange={(e) => setPrivateKey(e.target.value)}
+                  placeholder="Hex private key…"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <FieldLabel htmlFor="pubkey">Public Key</FieldLabel>
+                <input
+                  id="pubkey"
+                  type="text"
+                  className="field font-mono text-muted-foreground"
+                  value={derivedPubkey}
+                  readOnly
+                />
+              </div>
+              <button
+                onClick={handleGenerateKey}
+                className="btn-primary"
+                disabled={privateKey !== ''}
+              >
+                Generate New Key
+              </button>
+            </div>
+          </>
+        )}
       </section>
 
       {/* Relays Section */}
       <section className="space-y-3">
         <h3 className="text-base font-semibold border-b pb-2">Relays</h3>
         <div className="space-y-2">
-          {relays.map((url, i) => (
-            <div key={`${i}-${url}`} className="flex gap-2">
+          {rawRelays.map((entry, i) => (
+            <div key={i} className="flex items-center gap-2">
               <input
-                className="field"
-                value={url}
-                onChange={(e) => updateRelay(i, e.target.value)}
+                type="checkbox"
+                checked={entry.enabled}
+                onChange={(e) => updateRelay(i, { enabled: e.target.checked })}
+                className="h-4 w-4 accent-primary shrink-0"
+              />
+              <input
+                className={`field ${!entry.enabled ? 'opacity-50' : ''}`}
+                value={entry.url}
+                onChange={(e) => updateRelay(i, { url: e.target.value })}
                 placeholder="wss://relay.example.com"
               />
               <button
                 onClick={() =>
-                  setRelays(relays.filter((_, index) => index !== i))
+                  setRelays(rawRelays.filter((_, index) => index !== i))
                 }
-                className="px-3 py-2 text-sm text-red-500 border rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                className="px-3 py-2 text-sm text-red-500 border rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0"
               >
                 ✕
               </button>
@@ -916,7 +1102,7 @@ function SettingsPage() {
           ))}
         </div>
         <button
-          onClick={() => setRelays([...relays, ''])}
+          onClick={() => setRelays([...rawRelays, { url: '', enabled: true }])}
           className="text-sm text-primary hover:underline"
         >
           + Add Relay

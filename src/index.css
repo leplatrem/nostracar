@@ -70,3 +70,7 @@
            hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity;
   }
 }
+
+.text-capitalize::first-letter {
+  text-transform: uppercase;
+}
